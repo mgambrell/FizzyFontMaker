@@ -2,11 +2,18 @@
 
 #include "cute_png.h"
 
+#include "ChatgptFunctions.h"
+
+#include <direct.h>
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
 #include <vector>
 #include <algorithm>
+#include <string>
+#include <unordered_map>
 
 //There's old junk in here, the meaning is not clear or important for most of these.
 struct LetterRecord
@@ -17,153 +24,267 @@ struct LetterRecord
 	int xo, yo;
 };
 
-void makeFont(const char* inputImage, const char* outputJson, const char* outputPng)
+struct State
 {
-	cp_image_t img = cp_load_png(inputImage);
+	std::string input;
+	float outline = 0;
+};
+
+class ImageServer
+{
+public:
+
+	std::string InputDirectory;
+
+	cp_image_t* GetImage(const std::string& path)
+	{
+		auto it = images.find(path);
+		if(it != images.end())
+			return it->second;
+
+		std::string fullpath = InputDirectory + "/" + path + ".png";
+
+		cp_image_t* img = new cp_image_t();
+		*img = cp_load_png(fullpath.c_str());
+		images[path] = img;
+		return img;
+	}
+
+	~ImageServer()
+	{
+		for(auto it : images)
+		{
+			cp_free_png(it.second);
+			delete it.second;
+		}
+	}
+
+private:
+	std::unordered_map<std::string, cp_image_t*> images;
+};
+
+static ImageServer imageServer;
+
+struct Job
+{
+	State state;
+
+	struct 
+	{
+		int imageWidth, imageHeight;
+	} inputInfo;
+
+	struct
+	{
+		std::string path;
+	} outputInfo;
 
 	std::vector<LetterRecord> letterRecords;
-
-	const int cellPadding = 1;
-
-	int curChar = 0;
-	int imageWidth = img.w;
-	int imageHeight = img.h;
-
-	uint8_t curAlpha = img.pix[0].a;
-	int lastx = 0;
-	curChar = ' ';
-	for (int x = 1; x < imageWidth; x++)
+	
+	void PreProcess()
 	{
-		uint8_t a = img.pix[x].a;
-		if(a == curAlpha) continue;
-		else
+		//Generate output filename based on font
+		//we also produce a directory linking parameters to files, but having descriptive filenames is helpful
+		char tmp[1000];
+		sprintf(tmp, "%s_%g.png", state.input.c_str(), state.outline);
+		outputInfo.path = tmp;
+
+		//--------------------
+		//Reading input format
+
+		cp_image_t *img = imageServer.GetImage(state.input);
+
+		const int cellPadding = 1;
+
+		int curChar = 0;
+		int imageWidth = inputInfo.imageWidth = img->w;
+		int imageHeight = inputInfo.imageHeight = img->h;
+
+		uint8_t curAlpha = img->pix[0].a;
+		int lastx = 0;
+		curChar = ' ';
+		for (int x = 1; x < imageWidth; x++)
 		{
-			int w = x - lastx;
-			auto lr = LetterRecord{curChar, lastx, 1, w, imageHeight-1, w, 0, 0};
-			letterRecords.push_back(lr);
-			lastx = x;
-			curAlpha = img.pix[x].a;
-			curChar++;
-		}
-	}
-	//huh? I guess it's the last letter
-	{
-		int w = imageWidth - lastx;
-		auto lr = LetterRecord{curChar, lastx, 1, w, imageHeight-1, w, 0, 0};
-		letterRecords.push_back(lr);
-	}
-
-	//roughly approximate size of atlas. we'll over-allocate in case we need it
-	//pessimistically estimate width by assuming all characters are the widest
-	//add some padding at the same time
-	int wmax = -1, hmax = -1;
-	for(const auto &LR : letterRecords)
-		wmax = std::max(wmax,LR.width), hmax = std::max(hmax,LR.height);
-	const int kPadding = 1;
-	wmax += kPadding;
-	hmax += kPadding;
-	const int nGuessedPixels = wmax * letterRecords.size() * imageHeight;
-
-	//Search each power of 2 width to find something that makes room
-	//We start the height off bigger because we know we're going to multiply it by 2 later for a safety margin anyway
-	int w = 1;
-	int h = 2;
-	for(;;)
-	{
-		if(w*h>=nGuessedPixels)
-			break;
-		w *= 2;
-		h *= 2;
-	}
-
-	//allocate output buffer to transfer glyphs
-	//double-size the height (pessimistically, since we've just been estimating)
-	cp_pixel_t* atlasPixels = new cp_pixel_t[w*h*2];
-	memset(atlasPixels,0,sizeof(cp_pixel_t)*w*h*2);
-
-	//transfer glyphs to atlas, and update x/y in database to the atlas location as we go
-	int atx = kPadding;
-	int aty = kPadding;
-	int idx=0;
-	for (auto& lr : letterRecords)
-	{
-		//make sure we have horizontal room
-		if(atx + lr.width > w)
-		{
-			atx = kPadding;
-			aty += kPadding + hmax;
-		}
-
-		//(actually transfer glyphs)
-		for(int gy=0;gy<lr.height;gy++)
-		{
-			for(int gx=0;gx<lr.width;gx++)
+			uint8_t a = img->pix[x].a;
+			if(a == curAlpha) continue;
+			else
 			{
-				atlasPixels[(aty+gy)*w+atx+gx] = img.pix[(gy+lr.y)*img.w+gx+lr.x];
+				int w = x - lastx;
+				auto lr = LetterRecord{curChar, lastx, 1, w, imageHeight-1, w, 0, 0};
+				letterRecords.push_back(lr);
+				lastx = x;
+				curAlpha = img->pix[x].a;
+				curChar++;
 			}
 		}
-
-		//store position of glyph in atlas
-		lr.x = atx;
-		lr.y = aty;
-
-		//advance by the wmax, not the letter size (this way, we keep things in a nicer grid)
-		//atx += kPadding + wmax;
-		//NAH:
-		atx += kPadding + lr.width;
+		//huh? I guess it's the last letter
+		{
+			int w = imageWidth - lastx;
+			auto lr = LetterRecord{curChar, lastx, 1, w, imageHeight-1, w, 0, 0};
+			letterRecords.push_back(lr);
+		}
 	}
 
-	//done with input file
-	cp_free_png(&img);
-
-	//expand the height to make room for the final characters
-	aty += kPadding + hmax;
-
-	//prep a cute image to dump out
-	cp_image_t atlasCpImage;
-	atlasCpImage.pix = atlasPixels;
-	atlasCpImage.w = w;
-	atlasCpImage.h = (aty + 7) & ~7;
-	cp_save_png(outputPng,&atlasCpImage);
-	delete[] atlasPixels;
-
-	//shove all letters in a json array
-	nlohmann::json::array_t jLetters;
-	for (const auto& lr : letterRecords)
+	void Process()
 	{
-		jLetters.push_back(
+		cp_image_t *img = imageServer.GetImage(state.input);
+
+		//roughly approximate size of atlas. we'll over-allocate in case we need it
+		//pessimistically estimate width by assuming all characters are the widest
+		//add some padding at the same time
+		int wmax = -1, hmax = -1;
+		for(const auto &LR : letterRecords)
+			wmax = std::max(wmax,LR.width), hmax = std::max(hmax,LR.height);
+		const int kPadding = 1;
+		wmax += kPadding;
+		hmax += kPadding;
+		const int nGuessedPixels = wmax * (int)letterRecords.size() * inputInfo.imageHeight;
+
+		//Search each power of 2 width to find something that makes room
+		//We start the height off bigger because we know we're going to multiply it by 2 later for a safety margin anyway
+		int w = 1;
+		int h = 2;
+		for(;;)
+		{
+			if(w*h>=nGuessedPixels)
+				break;
+			w *= 2;
+			h *= 2;
+		}
+
+		//allocate output buffer to transfer glyphs
+		//double-size the height (pessimistically, since we've just been estimating)
+		cp_pixel_t* atlasPixels = new cp_pixel_t[w*h*2];
+		memset(atlasPixels,0,sizeof(cp_pixel_t)*w*h*2);
+
+		//transfer glyphs to atlas, and update x/y in database to the atlas location as we go
+		int atx = kPadding;
+		int aty = kPadding;
+		int idx=0;
+		for (auto& lr : letterRecords)
+		{
+			//make sure we have horizontal room
+			if(atx + lr.width > w)
 			{
-			{"char", lr.c},
-			{"x", lr.x},
-			{"y", lr.y},
-			{"width", lr.width},
-			{"height", lr.height},
-			{"logw", lr.logw},
-			{"xo", lr.xo},
-			{"yo", lr.yo}
-		});
+				atx = kPadding;
+				aty += kPadding + hmax;
+			}
+
+			//(actually transfer glyphs)
+			for(int gy=0;gy<lr.height;gy++)
+			{
+				for(int gx=0;gx<lr.width;gx++)
+				{
+					atlasPixels[(aty+gy)*w+atx+gx] = img->pix[(gy+lr.y)*img->w+gx+lr.x];
+				}
+			}
+
+			//store position of glyph in atlas
+			lr.x = atx;
+			lr.y = aty;
+
+			//advance by the wmax, not the letter size (this way, we keep things in a nicer grid)
+			//atx += kPadding + wmax;
+			//NAH:
+			atx += kPadding + lr.width;
+		}
+
+		//expand the height to make room for the final characters
+		aty += kPadding + hmax;
+
+		//prep a cute image to dump out
+		cp_image_t atlasCpImage;
+		atlasCpImage.pix = atlasPixels;
+		atlasCpImage.w = w;
+		atlasCpImage.h = (aty + 7) & ~7;
+		cp_save_png(outputInfo.path.c_str(),&atlasCpImage);
+		delete[] atlasPixels;
+
+		//shove all letters in a json array
+		nlohmann::json::array_t jLetters;
+		for (const auto& lr : letterRecords)
+		{
+			jLetters.push_back(
+				{
+					{"char", lr.c},
+				{"x", lr.x},
+				{"y", lr.y},
+				{"width", lr.width},
+				{"height", lr.height},
+				{"logw", lr.logw},
+				{"xo", lr.xo},
+				{"yo", lr.yo}
+				});
+		}
+
+		//construct final json doc
+		nlohmann::json jsonData;
+		jsonData["letters"] = jLetters;
+		
+		#if 0
+		FILE* jsonFile = fopen(outputJson, "wb");
+		fprintf(jsonFile, "%s\n", jsonData.dump(1,'\t').c_str());
+		fclose(jsonFile);
+		#endif
+	}
+};
+
+
+int main(int argc, char* argv[])
+{
+	std::vector<std::thread> threads;
+
+	const char* inputDir = argv[1];
+	const char* outputDir = argv[2];
+
+	//Change to input directory to simplify logic
+	(void)_chdir(inputDir);
+	imageServer.InputDirectory = inputDir;
+
+	//read input file and split to lines
+	FILE* inf = fopen("fizzyfont.txt","rb");
+	fseek(inf,0,SEEK_END);
+	long len = ftell(inf);
+	fseek(inf,0,SEEK_SET);
+	std::string data(len,0);
+	fread((char*)data.data(),1,len,inf);
+	fclose(inf);
+	auto lines = splitLines(data);
+
+
+	State state;
+	std::vector<Job> jobs;
+
+	//process commands on each line to create jobs
+	for(const auto &_line : lines)
+	{
+		auto line = trim(_line);
+		if(line.empty())
+			continue;
+		auto parts = splitBySpace(line);
+		auto cmd = parts[0];
+		if(cmd == "input")
+			state.input = parts[1];
+		else if(cmd == "outline")
+			(void)sscanf(parts[1].c_str(),"%f",&state.outline);
+		else if(cmd == "gen")
+		{
+			Job j;
+			j.state = state;
+			jobs.push_back(j);
+		}
 	}
 
-	//construct final json doc
-	nlohmann::json jsonData;
-	jsonData["letters"] = jLetters;
+	//process input for each job
+	//This is done in a separate pass so later I can change it to use keys to reduce the required amount of processing,
+	//and then kick off the outputting
+	parallelExecute(jobs,[](Job& J) { J.PreProcess(); });
 
-	FILE* jsonFile = fopen(outputJson, "wb");
-	fprintf(jsonFile, "%s\n", jsonData.dump(1,'\t').c_str());
-	fclose(jsonFile);
-}
+	//change to output directory
+	(void)_chdir(outputDir);
 
-int main(int argc, char* argv[]) {
-	if (argc != 5) {
-		printf("Usage: fontmaker fizzfont <input_image> <output_json> <output_png>\n");
-		return -1;
-	}
-
-	const char* inputImage = argv[2];
-	const char* outputJson = argv[3];
-	const char* outputPng = argv[4];
-
-	makeFont(inputImage, outputJson, outputPng);
+	//Do final processing and output
+	parallelExecute(jobs,[](Job& J) { J.Process(); });
 
 	return 0;
 }
