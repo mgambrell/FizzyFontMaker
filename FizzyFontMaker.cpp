@@ -24,10 +24,24 @@ struct LetterRecord
 	int xo, yo;
 };
 
+struct Key
+{
+	std::string face;
+	int size;
+	double outline = 0;
+
+	std::string GenerateKeyString()
+	{
+		char tmp[1000];
+		sprintf(tmp,"%s_px%d_o%g",face.c_str(),size,outline);
+		return tmp;
+	}
+};
+
 struct State
 {
+	Key key;
 	std::string input;
-	float outline = 0;
 };
 
 class ImageServer
@@ -77,17 +91,16 @@ struct Job
 	struct
 	{
 		std::string path;
+		nlohmann::json json;
 	} outputInfo;
 
 	std::vector<LetterRecord> letterRecords;
 	
 	void PreProcess()
 	{
-		//Generate output filename based on font
-		//we also produce a directory linking parameters to files, but having descriptive filenames is helpful
-		char tmp[1000];
-		sprintf(tmp, "%s_%g.png", state.input.c_str(), state.outline);
-		outputInfo.path = tmp;
+		//Generate a key string and use it to create the output path
+		std::string keystr = state.key.GenerateKeyString();
+		outputInfo.path = keystr + ".png";
 
 		//--------------------
 		//Reading input format
@@ -205,8 +218,8 @@ struct Job
 		for (const auto& lr : letterRecords)
 		{
 			jLetters.push_back(
-				{
-					{"char", lr.c},
+			{
+				{"char", lr.c},
 				{"x", lr.x},
 				{"y", lr.y},
 				{"width", lr.width},
@@ -214,12 +227,11 @@ struct Job
 				{"logw", lr.logw},
 				{"xo", lr.xo},
 				{"yo", lr.yo}
-				});
+			});
 		}
 
 		//construct final json doc
-		nlohmann::json jsonData;
-		jsonData["letters"] = jLetters;
+		outputInfo.json["letters"] = jLetters;
 		
 		#if 0
 		FILE* jsonFile = fopen(outputJson, "wb");
@@ -251,7 +263,6 @@ int main(int argc, char* argv[])
 	fclose(inf);
 	auto lines = splitLines(data);
 
-
 	State state;
 	std::vector<Job> jobs;
 
@@ -266,7 +277,11 @@ int main(int argc, char* argv[])
 		if(cmd == "input")
 			state.input = parts[1];
 		else if(cmd == "outline")
-			(void)sscanf(parts[1].c_str(),"%f",&state.outline);
+			state.key.outline = atof(parts[1].c_str());
+		else if(cmd == "key_face")
+			state.key.face = parts[1];
+		else if(cmd == "key_size")
+			state.key.size = atoi(parts[1].c_str());
 		else if(cmd == "gen")
 		{
 			Job j;
@@ -283,8 +298,11 @@ int main(int argc, char* argv[])
 	//change to output directory
 	(void)_chdir(outputDir);
 
-	//Do final processing and output
+	//Do final processing and png output
 	parallelExecute(jobs,[](Job& J) { J.Process(); });
+
+	//combine all json into a single doc
+	nlohmann::json jDatabase;
 
 	return 0;
 }
