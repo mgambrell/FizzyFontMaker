@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 //There's old junk in here, the meaning is not clear or important for most of these.
 struct LetterRecord
@@ -24,7 +25,7 @@ struct LetterRecord
 	int xo, yo;
 };
 
-struct Key
+struct FizzyFontKeyData
 {
 	std::string face;
 	int size;
@@ -40,7 +41,7 @@ struct Key
 
 struct State
 {
-	Key key;
+	FizzyFontKeyData key;
 	std::string input;
 };
 
@@ -140,6 +141,8 @@ struct Job
 
 	void Process()
 	{
+		std::string keystr = state.key.GenerateKeyString();
+
 		cp_image_t *img = imageServer.GetImage(state.input);
 
 		//roughly approximate size of atlas. we'll over-allocate in case we need it
@@ -232,15 +235,9 @@ struct Job
 
 		//construct final json doc
 		outputInfo.json["letters"] = jLetters;
-		
-		#if 0
-		FILE* jsonFile = fopen(outputJson, "wb");
-		fprintf(jsonFile, "%s\n", jsonData.dump(1,'\t').c_str());
-		fclose(jsonFile);
-		#endif
+		outputInfo.json["keyStr"] = keystr;
 	}
 };
-
 
 int main(int argc, char* argv[])
 {
@@ -290,6 +287,8 @@ int main(int argc, char* argv[])
 		}
 	}
 
+	printf("%d fonts\n",(int)jobs.size());
+
 	//process input for each job
 	//This is done in a separate pass so later I can change it to use keys to reduce the required amount of processing,
 	//and then kick off the outputting
@@ -302,7 +301,25 @@ int main(int argc, char* argv[])
 	parallelExecute(jobs,[](Job& J) { J.Process(); });
 
 	//combine all json into a single doc
-	nlohmann::json jDatabase;
+	//build list of key strings as we go and do last minute check for dupes
+	nlohmann::json jDatabase = nlohmann::json::array_t();
+	std::unordered_set<std::string> keystrs;
+	for(auto &J :jobs)
+	{
+		std::string keystr = J.state.key.GenerateKeyString();
+		if(keystrs.find(keystr) != keystrs.end())
+		{
+			printf("DUPLICATE KEYSTR: %s", keystr.c_str());
+			return -1;
+		}
+		keystrs.insert(keystr);
+		jDatabase.push_back(J.outputInfo.json);
+	}
+
+	//dump the json
+	FILE* jsonFile = fopen("fizzyfonts.json", "wb");
+	fprintf(jsonFile, "%s\n", jDatabase.dump(1,'\t').c_str());
+	fclose(jsonFile);
 
 	return 0;
 }
