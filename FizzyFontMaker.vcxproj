@@ -14,6 +14,7 @@
     <ClCompile Include="ChatgptFunctions.cpp" />
     <ClCompile Include="cute_png.cpp" />
     <ClCompile Include="FizzyFontMaker.cpp" />
+    <ClCompile Include="ltalloc.cc" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ChatgptFunctions.h" />
@@ -68,6 +69,7 @@
       <ConformanceMode>true</ConformanceMode>
       <EnableParallelCodeGeneration>true</EnableParallelCodeGeneration>
       <AdditionalIncludeDirectories>$(ProjectDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <LanguageStandard>stdcpp20</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -84,6 +86,7 @@
       <ConformanceMode>true</ConformanceMode>
       <EnableParallelCodeGeneration>true</EnableParallelCodeGeneration>
       <AdditionalIncludeDirectories>$(ProjectDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <LanguageStandard>stdcpp20</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
