@@ -147,6 +147,13 @@ struct Job
 	std::vector<Glyph*> glyphs;
 	std::vector<Glyph*> outlineGlyphs;
 
+	~Job()
+	{
+		for(auto list : {glyphs,outlineGlyphs})
+			for(auto g : list)
+				delete g;
+	}
+
 	void PreProcess()
 	{
 		//Generate a key string and use it to create the output path
@@ -290,19 +297,20 @@ struct Job
 	{
 		int padding = 1;
 		int hmax, wmax;
-		int w, h;
 		CPImage* atlasPixels;
 		int atx, aty;
+		int metaAtY;
 
 		void add(std::vector<Glyph*>& glyphs)
 		{
+			int myw = atlasPixels->w;
 			int idx=0;
 			for(int i=0;i<glyphs.size();i++)
 			{
 				auto& lr = glyphs[i];
 
 				//make sure we have horizontal room
-				if(atx + lr->w > w)
+				if(atx + lr->w > myw)
 				{
 					atx = padding;
 					aty += padding + hmax;
@@ -350,8 +358,8 @@ struct Job
 
 			//Search each power of 2 width to find something that makes room
 			//We start the height off bigger because we know we're going to multiply it by 2 later for a safety margin anyway
-			w = 1;
-			h = 2;
+			int w = 1;
+			int h = 2;
 			for(;;)
 			{
 				if(w*h>=nGuessedPixels)
@@ -366,7 +374,8 @@ struct Job
 
 			//allocate output buffer to transfer glyphs
 			//double-size the height (pessimistically, since we've just been estimating)
-			atlasPixels = new CPImage(w,h*2);
+			//then add 4 more (you'll see why later) and 8 more (you'll see why later)
+			atlasPixels = new CPImage(w,h*2+8);
 
 			//Begin atlasing with the needed padding
 			atx = padding;
@@ -374,11 +383,66 @@ struct Job
 
 			//add glyphs
 			add(glyphs);
-			//outline images go on a new line
+
+			//make room for the current row of images (which have been positioned with their top left at aty)
 			aty += padding + hmax;
-			//add outline images
+
+			//add outline glyphs
 			add(outlineGlyphs);
 
+			//same thing again for outline glyphs
+			aty += padding + hmax;
+
+			//-----------------------
+			//Metadata
+
+			//The metadata is comprised of 512 pixels for the glyphs and 512 pixels for the outlines
+			//(each character takes 2 pixels)
+			struct LetterMeta
+			{
+				uint16_t tx, ty;
+				uint16_t w, h;
+			};
+
+			//Expand the height to add room for the metadata
+			//To keep things prettier, we only put 256 pixels per row
+			//To make things FASTER (in theory), we could make it 32x32 since textures are generally stored in blocks on GPU
+			//But I'm not sure if they are in my Switch engine, so... no sense overthinking it.
+			//I've already got it configured to use rows of 256 for metadata for now.
+			metaAtY = aty;
+
+			//choose the final atlas size
+			//kind of strange to mutate the atlas pixels, but it's safe
+			atlasPixels->h = aty;
+			atlasPixels->h += 2*2; //2 rows, for each of 2 glyph types
+			atlasPixels->h = (atlasPixels->h + 7) & ~7; //keep really ugly texture sizes out of the picture
+
+			//Do both glyph types
+			for(int type=0;type<2;type++)
+			{
+				std::vector<Glyph*> &chosenGlyphs = (type==0) ? glyphs : outlineGlyphs;
+
+				for(int i=0;i<256;i++)
+				{
+					LetterMeta* m = (LetterMeta*)&atlasPixels->pix[(metaAtY+type*2)*w];
+					//yeah, it's inefficient
+					for (auto* G : chosenGlyphs)
+					{
+						if(G->c == i)
+						{
+							m[i].tx = G->atlas_x;
+							m[i].ty = G->atlas_y;
+							m[i].w = G->w;
+							m[i].h = G->h;
+
+							//(for debugging)
+							//xor the alpha channels so we end up with something we can even tell exists
+							m[i].ty ^= 0xFF00;
+							m[i].h ^= 0xFF00;
+						}
+					}
+				}
+			}
 		}
 
 	};
@@ -390,50 +454,11 @@ struct Job
 	{
 		std::string keystr = state.key.GenerateKeyString();
 
+		//build atlas
 		atlas.Build(glyphs, outlineGlyphs);
 
-		//expand the height to make room for the final characters
-		atlas.aty += atlas.padding + atlas.hmax;
-
-		//expand the height to add room for the metadata
-		int metaAtY = atlas.aty;
-		atlas.aty += 2;
-
-		//produce the metadata
-		struct LetterMeta
-		{
-			uint16_t tx, ty;
-			uint16_t w, h;
-		};
-		for(int i=0;i<256;i++)
-		{
-			LetterMeta* m = (LetterMeta*)&atlas.atlasPixels->pix[metaAtY*atlas.w];
-			//yeah, it's inefficient
-			for (auto* G : glyphs)
-			{
-				if(G->c == i)
-				{
-					m[i].tx = G->atlas_x;
-					m[i].ty = G->atlas_y;
-					m[i].w = G->w;
-					m[i].h = G->h;
-
-					//(for debugging)
-					//xor the alpha channels so we end up with something we can even tell exists
-					//m[i].ty ^= 0xFF00;
-					//m[i].h ^= 0xFF00;
-				}
-			}
-		}
-
-
-		//prep a cute image to dump out
-		cp_image_t atlasCpImage;
-		atlasCpImage.pix = atlas.atlasPixels->pix;
-		atlasCpImage.w = atlas.w;
-		atlasCpImage.h = (atlas.aty + 7) & ~7;
-		cp_save_png(outputInfo.path.c_str(),&atlasCpImage);
-		delete atlas.atlasPixels;
+		//dump cute image
+		cp_save_png(outputInfo.path.c_str(),atlas.atlasPixels);
 
 		//shove all letters in a json array
 		nlohmann::json::array_t jLetters;
@@ -454,7 +479,7 @@ struct Job
 		//construct final json doc
 		outputInfo.json["letters"] = jLetters;
 		outputInfo.json["keyStr"] = keystr;
-		outputInfo.json["metaAtY"] = metaAtY;
+		outputInfo.json["metaAtY"] = atlas.metaAtY;
 	}
 };
 
