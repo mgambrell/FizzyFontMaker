@@ -462,24 +462,33 @@ struct Job
 		//dump cute image
 		cp_save_png(outputInfo.path.c_str(),atlas.atlasPixels);
 
-		//shove all letters in a json array
+		//Shove all letters in a json array
+		//Be sure to do both glyph types
 		nlohmann::json::array_t jLetters;
-		for (const auto* G : glyphs)
+		nlohmann::json::array_t jOutlines;
+		for(int type=0;type<2;type++)
 		{
-			jLetters.push_back(
+			std::vector<Glyph*> &chosenGlyphs = (type==0) ? glyphs : outlineGlyphs;
+			nlohmann::json::array_t& ja = (type==0) ? jLetters : jOutlines;
+
+			for (const auto* G : chosenGlyphs)
 			{
-				{"char", G->c},
-				{"x", G->atlas_x},
-				{"y", G->atlas_y},
-				{"width", G->w},
-				{"height", G->h},
-				{"xo", G->xo},
-				{"yo", G->yo}
-			});
+				ja.push_back(
+				{
+					{"c", G->c},
+					{"x", G->atlas_x},
+					{"y", G->atlas_y},
+					{"w", G->w},
+					{"h", G->h},
+					{"xo", G->xo},
+					{"yo", G->yo}
+				});
+			}
 		}
 
 		//construct final json doc
-		outputInfo.json["letters"] = jLetters;
+		outputInfo.json["glyphs"] = jLetters;
+		outputInfo.json["outlines"] = jOutlines;
 		outputInfo.json["keyStr"] = keystr;
 		outputInfo.json["metaAtY"] = atlas.metaAtY;
 	}
