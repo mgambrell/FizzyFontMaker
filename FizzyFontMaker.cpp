@@ -18,6 +18,8 @@
 
 #include "ltalloc.hpp"
 
+//Wrapper for cute_png image
+//There's not much need to have it as a wrapper, but that's what we've done.
 struct CPImage : public cp_image_t
 {
 	CPImage(int width, int height)
@@ -41,21 +43,22 @@ struct CPImage : public cp_image_t
 	}
 };
 
-class NewGlyph : public CPImage
+//Encapsulates an isolated glyph. Carries its own bitmap data with it.
+class Glyph : public CPImage
 {
 public:
 	int c;
 	int xo = 0, yo = 0;
 	int atlas_x, atlas_y;
 
-	NewGlyph(int width, int height)
+	Glyph(int width, int height)
 		: CPImage(width, height)
 	{
 	}
 
-	NewGlyph* CreateOffset(int offset_x, int offset_y, int new_width, int new_height)
+	Glyph* CreateOffset(int offset_x, int offset_y, int new_width, int new_height)
 	{
-		NewGlyph* ret = new NewGlyph(new_width, new_height);
+		Glyph* ret = new Glyph(new_width, new_height);
 		ret->c = this->c;
 		ret->xo = this->xo - offset_x;
 		ret->yo = this->yo - offset_y;
@@ -141,8 +144,8 @@ struct Job
 		nlohmann::json json;
 	} outputInfo;
 
-	std::vector<NewGlyph*> newGlyphs;
-	std::vector<NewGlyph*> outlineGlyphs;
+	std::vector<Glyph*> glyphs;
+	std::vector<Glyph*> outlineGlyphs;
 
 	void PreProcess()
 	{
@@ -198,9 +201,9 @@ struct Job
 		//extract all to NewGlyphs
 		for (auto& lr : letterRecords)
 		{
-			NewGlyph* g = new NewGlyph(lr.width, lr.height);
+			Glyph* g = new Glyph(lr.width, lr.height);
 			g->c = lr.c;
-			newGlyphs.push_back(g);
+			glyphs.push_back(g);
 			
 			for(int gy=0;gy<lr.height;gy++)
 			{
@@ -233,16 +236,16 @@ struct Job
 			}
 		}
 
-		for (int i = 0; i < newGlyphs.size(); i++)
+		for (int i = 0; i < glyphs.size(); i++)
 		{
-			NewGlyph *rawGlyph = newGlyphs[i];
+			Glyph *rawGlyph = glyphs[i];
 
 			const int rg_width = rawGlyph->w;
 			const int rg_height = rawGlyph->h;
 			const int og_width = rg_width + thickness * 2;
 			const int og_height = rg_height + thickness * 2;
 
-			NewGlyph *og = rawGlyph->CreateOffset(thickness, thickness, og_width, og_height);
+			Glyph *og = rawGlyph->CreateOffset(thickness, thickness, og_width, og_height);
 			outlineGlyphs.push_back(og);
 
 			//for each pixel in output:
@@ -291,7 +294,7 @@ struct Job
 		CPImage* atlasPixels;
 		int atx, aty;
 
-		void add(std::vector<NewGlyph*>& glyphs)
+		void add(std::vector<Glyph*>& glyphs)
 		{
 			int idx=0;
 			for(int i=0;i<glyphs.size();i++)
@@ -327,7 +330,7 @@ struct Job
 		}
 
 
-		void Build(std::vector<NewGlyph*>& glyphs, std::vector<NewGlyph*>& outlineGlyphs)
+		void Build(std::vector<Glyph*>& glyphs, std::vector<Glyph*>& outlineGlyphs)
 		{
 			//roughly approximate size of  we'll over-allocate in case we need it
 			//pessimistically estimate width by assuming all characters are the widest
@@ -387,7 +390,7 @@ struct Job
 	{
 		std::string keystr = state.key.GenerateKeyString();
 
-		atlas.Build(newGlyphs, outlineGlyphs);
+		atlas.Build(glyphs, outlineGlyphs);
 
 		//expand the height to make room for the final characters
 		atlas.aty += atlas.padding + atlas.hmax;
@@ -406,7 +409,7 @@ struct Job
 		{
 			LetterMeta* m = (LetterMeta*)&atlas.atlasPixels->pix[metaAtY*atlas.w];
 			//yeah, it's inefficient
-			for (auto* G : newGlyphs)
+			for (auto* G : glyphs)
 			{
 				if(G->c == i)
 				{
@@ -434,7 +437,7 @@ struct Job
 
 		//shove all letters in a json array
 		nlohmann::json::array_t jLetters;
-		for (const auto* G : newGlyphs)
+		for (const auto* G : glyphs)
 		{
 			jLetters.push_back(
 			{
