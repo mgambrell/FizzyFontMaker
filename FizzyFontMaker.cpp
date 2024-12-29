@@ -358,24 +358,26 @@ struct Job
 
 			//Search each power of 2 width to find something that makes room
 			//We start the height off bigger because we know we're going to multiply it by 2 later for a safety margin anyway
-			int w = 1;
-			int h = 2;
-			for(;;)
 			{
-				if(w*h>=nGuessedPixels)
-					break;
-				w *= 2;
-				h *= 2;
+				int w = 1;
+				int h = 2;
+				for(;;)
+				{
+					if(w*h>=nGuessedPixels)
+						break;
+					w *= 2;
+					h *= 2;
+				}
+
+				//set width to a minimum of 256, so it's easier to see the atlas information "pixels"
+				w = std::min(w,256);
+				h = h;
+
+				//allocate output buffer to transfer glyphs
+				//double-size the height (pessimistically, since we've just been estimating)
+				//then add 4 more (you'll see why later) and 8 more (you'll see why later)
+				atlasPixels = new CPImage(w,h*2+8);
 			}
-
-			//set width to a minimum of 256, so it's easier to see the atlas information "pixels"
-			w = std::min(w,256);
-			h = h;
-
-			//allocate output buffer to transfer glyphs
-			//double-size the height (pessimistically, since we've just been estimating)
-			//then add 4 more (you'll see why later) and 8 more (you'll see why later)
-			atlasPixels = new CPImage(w,h*2+8);
 
 			//Begin atlasing with the needed padding
 			atx = padding;
@@ -424,7 +426,7 @@ struct Job
 
 				for(int i=0;i<256;i++)
 				{
-					LetterMeta* m = (LetterMeta*)&atlasPixels->pix[(metaAtY+type*2)*w];
+					LetterMeta* m = (LetterMeta*)&atlasPixels->pix[(metaAtY+type*2)*atlasPixels->w];
 					//yeah, it's inefficient
 					for (auto* G : chosenGlyphs)
 					{
@@ -437,8 +439,8 @@ struct Job
 
 							//(for debugging)
 							//xor the alpha channels so we end up with something we can even tell exists
-							m[i].ty ^= 0xFF00;
-							m[i].h ^= 0xFF00;
+							//m[i].ty ^= 0xFF00;
+							//m[i].h ^= 0xFF00;
 						}
 					}
 				}
