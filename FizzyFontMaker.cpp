@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
 
 #include <vector>
 #include <algorithm>
@@ -17,6 +18,18 @@
 #include <unordered_set>
 
 #include "ltalloc.hpp"
+
+void fatal(const char* fmt, ...)
+{
+	printf("FATAL ERROR");
+	
+	va_list args;
+	va_start(args, fmt);
+	vprintf(fmt, args);
+	va_end(args);
+
+	abort();
+}
 
 //Wrapper for cute_png image
 //There's not much need to have it as a wrapper, but that's what we've done.
@@ -77,14 +90,23 @@ public:
 struct FizzyFontKeyData
 {
 	std::string face;
-	int size;
-	double outline = 0;
+	int size = 0;
+	int outline = 0;
 
 	std::string GenerateKeyString()
 	{
-		char tmp[1000];
-		sprintf(tmp,"%s_px%d_o%g",face.c_str(),size,outline);
+		char tmp[100];
+		sprintf(tmp,"%s_px%d_o%d",toLower(face).c_str(),size,outline);
 		return tmp;
+	}
+
+private:
+	static std::string toLower(std::string str)
+	{
+		std::string ret = str;
+		for(char & c : ret)
+			c = (char)std::tolower(c);
+		return ret;
 	}
 };
 
@@ -92,6 +114,9 @@ struct State
 {
 	FizzyFontKeyData key;
 	std::string input;
+	int xo = 0;
+	int yo = 0;
+	int spacesize = 0;
 };
 
 class ImageServer
@@ -226,6 +251,7 @@ struct Job
 
 	void createOutlines()
 	{
+		//TODO: use actual thickness
 		int thickness = 2;
 
 		//create a symmetric circular kernel with anti-aliasing and normalization
@@ -233,12 +259,13 @@ struct Job
 		float *kernel = new float[kernelWidth * kernelWidth];
 		float center = (float)thickness;
 		float maxKernelValue = thickness + 0.5f;
+		float overdrive = 1.0f; //increase to darken the outline
 		for (int y = 0; y < kernelWidth; y++) {
 			for (int x = 0; x < kernelWidth; x++) {
 				float dx = x - center;
 				float dy = y - center;
 				float distance = sqrt(dx * dx + dy * dy);
-				float val = std::max(0.0f, maxKernelValue - distance);
+				float val = std::max(0.0f, maxKernelValue - distance) * overdrive;
 				kernel[y * kernelWidth + x] = val / maxKernelValue;
 			}
 		}
@@ -491,6 +518,9 @@ struct Job
 		outputInfo.json["outlines"] = jOutlines;
 		outputInfo.json["keyStr"] = keystr;
 		outputInfo.json["metaAtY"] = atlas.metaAtY;
+		outputInfo.json["xo"] = state.xo;
+		outputInfo.json["yo"] = state.yo;
+		outputInfo.json["spacesize"] = state.spacesize;
 	}
 };
 
@@ -527,15 +557,29 @@ int main(int argc, char* argv[])
 		auto parts = splitBySpace(line);
 		auto cmd = parts[0];
 		if(cmd == "input")
+		{
+			//reset all state
+			new(&state) State();
 			state.input = parts[1];
+		}
 		else if(cmd == "outline")
-			state.key.outline = atof(parts[1].c_str());
+			state.key.outline = atoi(parts[1].c_str());
 		else if(cmd == "key_face")
 			state.key.face = parts[1];
 		else if(cmd == "key_size")
 			state.key.size = atoi(parts[1].c_str());
+		else if(cmd == "yo")
+			state.yo = atoi(parts[1].c_str());
+		else if(cmd == "xo")
+			state.xo = atoi(parts[1].c_str());
+		else if(cmd == "spacesize")
+			state.spacesize = atoi(parts[1].c_str());
 		else if(cmd == "gen")
 		{
+			//make sure needed parts are set
+			if(state.key.size == 0) fatal("key_size not set");
+			if(state.key.face.empty()) fatal("key_face not set");
+
 			Job j;
 			j.state = state;
 			jobs.push_back(j);
