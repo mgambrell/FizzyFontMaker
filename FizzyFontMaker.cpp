@@ -90,13 +90,15 @@ public:
 struct FizzyFontKeyData
 {
 	std::string face;
-	int size = 0;
+	int size;
 	int outline = 0;
+	bool bold = false;
 
 	std::string GenerateKeyString()
 	{
 		char tmp[100];
-		sprintf(tmp,"%s_px%d_o%d",toLower(face).c_str(),size,outline);
+		const char* b = bold?"_bold":"";
+		sprintf(tmp,"%s%s_px%d_o%d",toLower(face).c_str(),b,size,outline);
 		return tmp;
 	}
 
@@ -117,6 +119,7 @@ struct State
 	int xo = 0;
 	int yo = 0;
 	int spacesize = 0;
+	int starts_with = ' ';
 };
 
 class ImageServer
@@ -208,7 +211,7 @@ struct Job
 
 		uint8_t curAlpha = img->pix[0].a;
 		int lastx = 0;
-		curChar = ' ';
+		curChar = state.starts_with;
 		for (int x = 1; x < imageWidth; x++)
 		{
 			uint8_t a = img->pix[x].a;
@@ -554,6 +557,8 @@ int main(int argc, char* argv[])
 		auto line = trim(_line);
 		if(line.empty())
 			continue;
+		if(line[0] == '#') //comments
+			continue;
 		auto parts = splitBySpace(line);
 		auto cmd = parts[0];
 		if(cmd == "input")
@@ -568,12 +573,21 @@ int main(int argc, char* argv[])
 			state.key.face = parts[1];
 		else if(cmd == "key_size")
 			state.key.size = atoi(parts[1].c_str());
+		else if(cmd == "key_bold")
+			state.key.bold = true;
 		else if(cmd == "yo")
 			state.yo = atoi(parts[1].c_str());
 		else if(cmd == "xo")
 			state.xo = atoi(parts[1].c_str());
 		else if(cmd == "spacesize")
 			state.spacesize = atoi(parts[1].c_str());
+		else if(cmd == "start_char")
+		{
+			if(parts[1][0] == '\'')
+				state.starts_with = parts[1][1];
+			else
+				state.starts_with = atoi(parts[1].c_str());
+		}
 		else if(cmd == "gen")
 		{
 			//make sure needed parts are set
