@@ -112,14 +112,22 @@ private:
 	}
 };
 
+struct InputRef
+{
+	std::string filename;
+	int startCode;
+	int usenchars = -1;
+};
+
 struct State
 {
 	FizzyFontKeyData key;
-	std::string input;
+	int kern = 0;
+	int usenchars = -1;
 	int xo = 0;
 	int yo = 0;
 	int spacesize = 0;
-	int starts_with = ' ';
+	std::vector<InputRef> inputs;
 };
 
 class ImageServer
@@ -191,63 +199,77 @@ struct Job
 		//--------------------
 		//Reading input format
 
-		struct LetterRecord
+		for(int II=0;II<state.inputs.size();II++)
 		{
-			int c;
-			int x, y, width, height;
-			int logw;
-			int xo, yo;
-		};
-
-		std::vector<LetterRecord> letterRecords;
-
-		cp_image_t *img = imageServer.GetImage(state.input);
-
-		const int cellPadding = 1;
-
-		int curChar = 0;
-		int imageWidth = inputInfo.imageWidth = img->w;
-		int imageHeight = inputInfo.imageHeight = img->h;
-
-		uint8_t curAlpha = img->pix[0].a;
-		int lastx = 0;
-		curChar = state.starts_with;
-		for (int x = 1; x < imageWidth; x++)
-		{
-			uint8_t a = img->pix[x].a;
-			if(a == curAlpha) continue;
-			else
+			struct LetterRecord
 			{
-				int w = x - lastx;
-				auto lr = LetterRecord{curChar, lastx, 1, w, imageHeight-1, w, 0, 0};
-				letterRecords.push_back(lr);
-				lastx = x;
-				curAlpha = img->pix[x].a;
-				curChar++;
-			}
-		}
-		//huh? I guess it's the last letter
-		{
-			int w = imageWidth - lastx;
-			auto lr = LetterRecord{curChar, lastx, 1, w, imageHeight-1, w, 0, 0};
-			letterRecords.push_back(lr);
-		}
+				int c;
+				int x, y, width, height;
+				int logw;
+				int xo, yo;
+			};
 
-		//extract all to NewGlyphs
-		for (auto& lr : letterRecords)
-		{
-			Glyph* g = new Glyph(lr.width, lr.height);
-			g->c = lr.c;
-			glyphs.push_back(g);
-			
-			for(int gy=0;gy<lr.height;gy++)
+			std::vector<LetterRecord> letterRecords;
+
+			const auto& input = state.inputs[II];
+
+			cp_image_t *img = imageServer.GetImage(input.filename);
+
+			const int cellPadding = 1;
+
+			int curChar = 0;
+			int imageWidth = inputInfo.imageWidth = img->w;
+			int imageHeight = inputInfo.imageHeight = img->h;
+
+			uint8_t curAlpha = img->pix[0].a;
+			int lastx = 0;
+			curChar = input.startCode;
+			int index = 0;
+			for (int x = 1; x < imageWidth; x++)
 			{
-				for(int gx=0;gx<lr.width;gx++)
+				uint8_t a = img->pix[x].a;
+				if(a == curAlpha) continue;
+				else
 				{
-					g->at(gx,gy) = img->pix[(gy+lr.y)*img->w+gx+lr.x];
+					int w = x - lastx;
+					auto lr = LetterRecord{curChar, lastx, 1, w, imageHeight-1, w, 0, 0};
+					letterRecords.push_back(lr);
+					lastx = x;
+					curAlpha = img->pix[x].a;
+					curChar++;
+					index++;
+					if(index == input.usenchars && input.usenchars != -1)
+						break;
 				}
 			}
-		}
+			//huh? I guess it's the last letter
+			if(index >= input.usenchars && input.usenchars != -1)
+			{
+			}
+			else
+			{
+				int w = imageWidth - lastx;
+				auto lr = LetterRecord{curChar, lastx, 1, w, imageHeight-1, w, 0, 0};
+				letterRecords.push_back(lr);
+			}
+
+			//extract all to NewGlyphs
+			for (auto& lr : letterRecords)
+			{
+				Glyph* g = new Glyph(lr.width, lr.height);
+				g->c = lr.c;
+				glyphs.push_back(g);
+			
+				for(int gy=0;gy<lr.height;gy++)
+				{
+					for(int gx=0;gx<lr.width;gx++)
+					{
+						g->at(gx,gy) = img->pix[(gy+lr.y)*img->w+gx+lr.x];
+					}
+				}
+			}
+
+		} //END INPUT LOOP
 
 		createOutlines();
 	}
@@ -315,7 +337,9 @@ struct Job
 					}
 
 					//clamp the accumulated value and write it directly to the output glyph
-					og->at(x, y).a = std::min(255, static_cast<int>(accumAlpha));
+					auto& px = og->at(x, y);
+					px.a = std::min(255, static_cast<int>(accumAlpha));
+					px.r = px.g = px.b = 0; //13; //experiment with gray dropshadow
 				}
 			}
 		}
@@ -405,8 +429,8 @@ struct Job
 
 				//allocate output buffer to transfer glyphs
 				//double-size the height (pessimistically, since we've just been estimating)
-				//then add 4 more (you'll see why later) and 8 more (you'll see why later)
-				atlasPixels = new CPImage(w,h*2+8);
+				//then add 4 more (you'll see why later) and 8*256 more (you'll see why later)
+				atlasPixels = new CPImage(w,h*2+8*256);
 			}
 
 			//Begin atlasing with the needed padding
@@ -446,7 +470,7 @@ struct Job
 			//choose the final atlas size
 			//kind of strange to mutate the atlas pixels, but it's safe
 			atlasPixels->h = aty;
-			atlasPixels->h += 2*2; //2 rows, for each of 2 glyph types
+			atlasPixels->h += 2*2*256; //2 rows, for each of 2 glyph types, times 256 pages!! yeah this is bad, I need to make a compact representation, but whatever for now
 			atlasPixels->h = (atlasPixels->h + 7) & ~7; //keep really ugly texture sizes out of the picture
 
 			//Do both glyph types
@@ -454,9 +478,9 @@ struct Job
 			{
 				std::vector<Glyph*> &chosenGlyphs = (type==0) ? glyphs : outlineGlyphs;
 
-				for(int i=0;i<256;i++)
+				for(int i=0;i<256*256;i++)
 				{
-					LetterMeta* m = (LetterMeta*)&atlasPixels->pix[(metaAtY+type*2)*atlasPixels->w];
+					LetterMeta* m = (LetterMeta*)&atlasPixels->pix[(metaAtY+type*2*256)*atlasPixels->w];
 					//yeah, it's inefficient
 					for (auto* G : chosenGlyphs)
 					{
@@ -467,8 +491,14 @@ struct Job
 							m[i].w = G->w;
 							m[i].h = G->h;
 
+							if(m[i].ty > 150)
+							{
+								int zzz=9;
+							}
+
 							//(for debugging)
 							//xor the alpha channels so we end up with something we can even tell exists
+							//THIS BREAKS THE RENDERING! it's only used for checking where the meta is showing up in the output atlas
 							//m[i].ty ^= 0xFF00;
 							//m[i].h ^= 0xFF00;
 						}
@@ -511,7 +541,7 @@ struct Job
 					{"w", G->w},
 					{"h", G->h},
 					{"xo", G->xo},
-					{"yo", G->yo}
+					{"yo", G->yo},
 				});
 			}
 		}
@@ -523,12 +553,16 @@ struct Job
 		outputInfo.json["metaAtY"] = atlas.metaAtY;
 		outputInfo.json["xo"] = state.xo;
 		outputInfo.json["yo"] = state.yo;
+		outputInfo.json["kern"] = state.kern;
 		outputInfo.json["spacesize"] = state.spacesize;
 	}
 };
 
+#include <windows.h>
 int main(int argc, char* argv[])
 {
+	SetErrorMode(0);
+
 	std::vector<std::thread> threads;
 
 	const char* inputDir = argv[1];
@@ -561,11 +595,16 @@ int main(int argc, char* argv[])
 			continue;
 		auto parts = splitBySpace(line);
 		auto cmd = parts[0];
-		if(cmd == "input")
+		if(cmd == "start")
 		{
 			//reset all state
 			new(&state) State();
-			state.input = parts[1];
+		}
+		else if (cmd == "input")
+		{
+			InputRef IR = { parts[1],std::atoi(parts[2].c_str()) };
+			IR.usenchars = state.usenchars;
+			state.inputs.push_back(IR);
 		}
 		else if(cmd == "outline")
 			state.key.outline = atoi(parts[1].c_str());
@@ -579,15 +618,12 @@ int main(int argc, char* argv[])
 			state.yo = atoi(parts[1].c_str());
 		else if(cmd == "xo")
 			state.xo = atoi(parts[1].c_str());
+		else if(cmd == "kern")
+			state.kern = atoi(parts[1].c_str());
+		else if(cmd == "usenchars")
+			state.usenchars = atoi(parts[1].c_str());
 		else if(cmd == "spacesize")
 			state.spacesize = atoi(parts[1].c_str());
-		else if(cmd == "start_char")
-		{
-			if(parts[1][0] == '\'')
-				state.starts_with = parts[1][1];
-			else
-				state.starts_with = atoi(parts[1].c_str());
-		}
 		else if(cmd == "gen")
 		{
 			//make sure needed parts are set
