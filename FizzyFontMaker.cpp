@@ -1,4 +1,4 @@
-#include "nlohmann/json.hpp"
+﻿#include "nlohmann/json.hpp"
 
 #include "cute_png.h"
 
@@ -127,6 +127,8 @@ struct State
 	int xo = 0;
 	int yo = 0;
 	int spacesize = 0;
+	bool somepx = false;
+	int cellWidth = -1, cellHeight = -1;
 	std::vector<InputRef> inputs;
 };
 
@@ -190,6 +192,156 @@ struct Job
 				delete g;
 	}
 
+	void ReadSomepx(int cellWidth, int cellHeight, const InputRef& input)
+	{
+		cp_image_t* img = imageServer.GetImage(input.filename);
+
+		struct SomepxGlyphScan
+		{
+			int c;
+			int firstPyo = INT_MAX;
+			int firstPxo = 0; //invariant
+			int lastPyo = -1;
+			int lastPxo = -1;
+			int catx, caty;
+		};
+
+		std::vector<SomepxGlyphScan> scans;
+
+		const wchar_t* charMap = LR"(ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,;:?!"'+-=*%_()[]{}~#&@©®™°^`|/\<>…€$£¢¿¡“”‘’«»‹›„‚·•ÀÁÂÄÃÅĄÆÇĆÐÈÉÊËĘĞÌÍÎÏİŁÑŃÒÓÔÖÕŐØŒŚŞẞÞÙÚÛÜŰÝŸŹŻàáâäãåąæçćðèéêëęğìíîïıłñńòóôöõőøœśşßþùúûüűýÿźżАБВГҐДЕЁЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгґдеёєжзиіїйклмнопрстуфхцчшщъыьэюяČĎĚŇŘŠŤŮŽčďěňřšťůž)";
+		const wchar_t* cp = charMap;
+		int xslot = 0, yslot = 0;
+		while(*cp)
+		{
+			int catx = cellWidth * xslot;
+			int caty = cellHeight * yslot;
+			SomepxGlyphScan g;
+			g.c = (int)*cp;
+			g.catx = catx;
+			g.caty = caty;
+
+			//Locate the crop area for the character
+			for(int pyo = 0; pyo < cellHeight; pyo++)
+			{
+				for(int pxo = 0; pxo < cellWidth; pxo++)
+				{
+					int px = pxo + catx;
+					int py = pyo + caty;
+					cp_pixel_t c = img->pix[img->w*py+px];
+					if(c.a != 0)
+					{
+						g.lastPyo = pyo;
+						g.firstPyo = std::min(g.firstPyo, pyo);
+						g.lastPxo = std::max(g.lastPxo, pxo);
+					}
+				}
+			}
+
+			//Add it to the list unless it was empty
+			if(g.lastPyo != -1)
+				scans.push_back(g);
+
+			cp++;
+			xslot++;
+			if(xslot == 26) xslot = 0, yslot++;
+		} // END SCAN LOOP
+
+		//find the minimum firstPyo; we can crop the top off most glyphs in most cases
+		int minFirstPyo = INT_MAX;
+		for(const auto &s : scans)
+			minFirstPyo = std::min(minFirstPyo, s.firstPyo);
+
+		//create the glyph with the needed dimensions and copy it in
+		for(const auto &s : scans)
+		{
+			int glyphW = s.lastPxo - s.firstPxo + 1;
+			int glyphH = s.lastPyo - minFirstPyo + 1;
+			Glyph* g = new Glyph(glyphW, glyphH);
+			g->c = s.c;
+			glyphs.push_back(g);
+
+			for(int gy = 0; gy < glyphH; gy++)
+			{
+				for(int gx = 0; gx < glyphW; gx++)
+				{
+					int srcatx = s.catx + gx + s.firstPxo;
+					int srcaty = s.caty + gy + minFirstPyo;
+					g->at(gx, gy) = img->pix[srcaty * img->w + srcatx];
+				}
+			}
+		}
+
+	}
+
+	void ReadFizzFont(const InputRef& input)
+	{
+		struct LetterRecord
+		{
+			int c;
+			int x, y, width, height;
+			int logw;
+			int xo, yo;
+		};
+
+		std::vector<LetterRecord> letterRecords;
+
+		cp_image_t* img = imageServer.GetImage(input.filename);
+
+		const int cellPadding = 1;
+
+		int curChar = 0;
+		int imageWidth = inputInfo.imageWidth = img->w;
+		int imageHeight = inputInfo.imageHeight = img->h;
+
+		uint8_t curAlpha = img->pix[0].a;
+		int lastx = 0;
+		curChar = input.startCode;
+		int index = 0;
+		for(int x = 1; x < imageWidth; x++)
+		{
+			uint8_t a = img->pix[x].a;
+			if(a == curAlpha) continue;
+			else
+			{
+				int w = x - lastx;
+				auto lr = LetterRecord{ curChar, lastx, 1, w, imageHeight - 1, w, 0, 0 };
+				letterRecords.push_back(lr);
+				lastx = x;
+				curAlpha = img->pix[x].a;
+				curChar++;
+				index++;
+				if(index == input.usenchars && input.usenchars != -1)
+					break;
+			}
+		}
+		//huh? I guess it's the last letter
+		if(index >= input.usenchars && input.usenchars != -1)
+		{
+		}
+		else
+		{
+			int w = imageWidth - lastx;
+			auto lr = LetterRecord{ curChar, lastx, 1, w, imageHeight - 1, w, 0, 0 };
+			letterRecords.push_back(lr);
+		}
+
+		//extract all to NewGlyphs
+		for(auto& lr : letterRecords)
+		{
+			Glyph* g = new Glyph(lr.width, lr.height);
+			g->c = lr.c;
+			glyphs.push_back(g);
+
+			for(int gy = 0; gy < lr.height; gy++)
+			{
+				for(int gx = 0; gx < lr.width; gx++)
+				{
+					g->at(gx, gy) = img->pix[(gy + lr.y) * img->w + gx + lr.x];
+				}
+			}
+		}
+	}
+
 	void PreProcess()
 	{
 		//Generate a key string and use it to create the output path
@@ -201,75 +353,43 @@ struct Job
 
 		for(int II=0;II<state.inputs.size();II++)
 		{
-			struct LetterRecord
-			{
-				int c;
-				int x, y, width, height;
-				int logw;
-				int xo, yo;
-			};
-
-			std::vector<LetterRecord> letterRecords;
-
 			const auto& input = state.inputs[II];
 
-			cp_image_t *img = imageServer.GetImage(input.filename);
-
-			const int cellPadding = 1;
-
-			int curChar = 0;
-			int imageWidth = inputInfo.imageWidth = img->w;
-			int imageHeight = inputInfo.imageHeight = img->h;
-
-			uint8_t curAlpha = img->pix[0].a;
-			int lastx = 0;
-			curChar = input.startCode;
-			int index = 0;
-			for (int x = 1; x < imageWidth; x++)
-			{
-				uint8_t a = img->pix[x].a;
-				if(a == curAlpha) continue;
-				else
-				{
-					int w = x - lastx;
-					auto lr = LetterRecord{curChar, lastx, 1, w, imageHeight-1, w, 0, 0};
-					letterRecords.push_back(lr);
-					lastx = x;
-					curAlpha = img->pix[x].a;
-					curChar++;
-					index++;
-					if(index == input.usenchars && input.usenchars != -1)
-						break;
-				}
-			}
-			//huh? I guess it's the last letter
-			if(index >= input.usenchars && input.usenchars != -1)
-			{
-			}
+			if(state.somepx)
+				ReadSomepx(state.cellWidth, state.cellHeight, input);
 			else
-			{
-				int w = imageWidth - lastx;
-				auto lr = LetterRecord{curChar, lastx, 1, w, imageHeight-1, w, 0, 0};
-				letterRecords.push_back(lr);
-			}
-
-			//extract all to NewGlyphs
-			for (auto& lr : letterRecords)
-			{
-				Glyph* g = new Glyph(lr.width, lr.height);
-				g->c = lr.c;
-				glyphs.push_back(g);
-			
-				for(int gy=0;gy<lr.height;gy++)
-				{
-					for(int gx=0;gx<lr.width;gx++)
-					{
-						g->at(gx,gy) = img->pix[(gy+lr.y)*img->w+gx+lr.x];
-					}
-				}
-			}
-
+				ReadFizzFont(input);
+		
 		} //END INPUT LOOP
+
+		//for somepx, add a dummy space
+		if(state.somepx)
+		{
+			if(state.spacesize == 0)
+				fatal("spacesize must be set for somepx format");
+			Glyph *g = new Glyph(state.spacesize, 1);
+			g->c = 32;
+			glyphs.push_back(g);
+		}
+
+		//erase the space and recreate with the needed width (if we have a spacesize set)
+		if(state.spacesize)
+		{
+			auto it = std::find_if(glyphs.begin(), glyphs.end(), [](Glyph* a) {return a->c == 32; });
+			if(it != glyphs.end())
+			{
+				Glyph* g = *it;
+				int height = g->h;
+				delete g;
+				glyphs.erase(it);
+
+				int realSpaceSize = state.spacesize - state.kern;
+
+				g = new Glyph(realSpaceSize, 1);
+				g->c = 32;
+				glyphs.push_back(g);
+			}
+		}
 
 		createOutlines();
 	}
@@ -554,7 +674,6 @@ struct Job
 		outputInfo.json["xo"] = state.xo;
 		outputInfo.json["yo"] = state.yo;
 		outputInfo.json["kern"] = state.kern;
-		outputInfo.json["spacesize"] = state.spacesize;
 	}
 };
 
@@ -600,11 +719,32 @@ int main(int argc, char* argv[])
 			//reset all state
 			new(&state) State();
 		}
+		else if(cmd == "format")
+		{
+			if(parts[1] == "somepx")
+			{
+				state.somepx = true;
+				if(parts.size()<4)
+					fatal("Not enough args for: format somepx cellwidth cellheight");
+				state.cellWidth = std::atoi(parts[2].c_str());
+				state.cellHeight = std::atoi(parts[3].c_str());
+			}
+		}
 		else if (cmd == "input")
 		{
-			InputRef IR = { parts[1],std::atoi(parts[2].c_str()) };
-			IR.usenchars = state.usenchars;
-			state.inputs.push_back(IR);
+			if(state.somepx)
+			{
+				//somepx's format
+				InputRef IR;
+				IR.filename = parts[1];
+				state.inputs.push_back(IR);
+			}
+			else
+			{
+				InputRef IR = { parts[1],std::atoi(parts[2].c_str()) };
+				IR.usenchars = state.usenchars;
+				state.inputs.push_back(IR);
+			}
 		}
 		else if(cmd == "outline")
 			state.key.outline = atoi(parts[1].c_str());
