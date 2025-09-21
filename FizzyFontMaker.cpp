@@ -119,6 +119,11 @@ struct InputRef
 	int usenchars = -1;
 };
 
+struct CharacterKernData
+{
+	int before, after, amount;
+};
+
 struct State
 {
 	FizzyFontKeyData key;
@@ -130,6 +135,7 @@ struct State
 	bool somepx = false;
 	int cellWidth = -1, cellHeight = -1;
 	std::vector<InputRef> inputs;
+	std::vector<CharacterKernData> ckern;
 };
 
 class ImageServer
@@ -640,12 +646,13 @@ struct Job
 		atlas.Build(glyphs, outlineGlyphs);
 
 		//dump cute image
-		cp_save_png(outputInfo.path.c_str(),atlas.atlasPixels);
+		cp_save_png(outputInfo.path.c_str(), atlas.atlasPixels);
 
 		//Shove all letters in a json array
 		//Be sure to do both glyph types
 		nlohmann::json::array_t jLetters;
 		nlohmann::json::array_t jOutlines;
+
 		for(int type=0;type<2;type++)
 		{
 			std::vector<Glyph*> &chosenGlyphs = (type==0) ? glyphs : outlineGlyphs;
@@ -666,8 +673,23 @@ struct Job
 			}
 		}
 
+		//create character kerning records
+		nlohmann::json::array_t jCkerns;
+		for(auto rec : this->state.ckern)
+		{
+			jCkerns.push_back(
+				{
+					//int before, after, amount;
+					{"b",rec.before},
+					{"a",rec.after},
+					{"n",rec.amount},
+				}
+			);
+		}
+
 		//construct final json doc
 		outputInfo.json["glyphs"] = jLetters;
+		outputInfo.json["ckerns"] = jCkerns;
 		outputInfo.json["outlines"] = jOutlines;
 		outputInfo.json["keyStr"] = keystr;
 		outputInfo.json["metaAtY"] = atlas.metaAtY;
@@ -760,6 +782,14 @@ int main(int argc, char* argv[])
 			state.xo = atoi(parts[1].c_str());
 		else if(cmd == "kern")
 			state.kern = atoi(parts[1].c_str());
+		else if(cmd == "ckern")
+		{
+			CharacterKernData ckd;
+			if(parts[1] == "*") ckd.before = -1; else ckd.before = atoi(parts[1].c_str());
+			if(parts[2] == "*") ckd.after = -1; else ckd.after = atoi(parts[2].c_str());
+			ckd.amount = atoi(parts[3].c_str());
+			state.ckern.push_back(ckd);
+		}
 		else if(cmd == "usenchars")
 			state.usenchars = atoi(parts[1].c_str());
 		else if(cmd == "spacesize")
