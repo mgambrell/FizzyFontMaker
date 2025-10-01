@@ -130,6 +130,7 @@ struct InputRef
 {
 	std::string filename;
 	int startCode;
+	std::string charset;
 	int usenchars = -1;
 };
 
@@ -147,8 +148,8 @@ struct State
 	int yo = 0;
 	int spacesize = 0;
 	bool somepx = false;
-	std::string charset;
 	int cellWidth = -1, cellHeight = -1;
+	std::string charset;
 	std::vector<InputRef> inputs;
 	std::vector<CharacterKernData> ckern;
 };
@@ -232,9 +233,9 @@ struct Job
 		std::wstring charmapWTmp;
 		const wchar_t* charMap = LR"()";
 
-		if(!state.charset.empty())
+		if(!input.charset.empty())
 		{
-			charmapWTmp = utf8toW(state.charset);
+			charmapWTmp = utf8toW(input.charset);
 			charMap = charmapWTmp.c_str();
 		}
 
@@ -786,6 +787,7 @@ int main(int argc, char* argv[])
 				//somepx's format
 				InputRef IR;
 				IR.filename = parts[1];
+				IR.charset = state.charset;
 				state.inputs.push_back(IR);
 			}
 			else
