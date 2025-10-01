@@ -1,4 +1,7 @@
-﻿#include "nlohmann/json.hpp"
+﻿#define _SILENCE_ALL_CXX17_DEPRECATION_WARNINGS 1
+#define _SILENCE_CXX17_ITERATOR_BASE_CLASS_DEPRECATION_WARNING 1
+
+#include "nlohmann/json.hpp"
 
 #include "cute_png.h"
 
@@ -18,6 +21,17 @@
 #include <unordered_set>
 
 #include "ltalloc.hpp"
+
+
+#include "nemtrif/utf8.h"
+
+std::wstring utf8toW(const std::string& str)
+{
+	std::u16string dest;
+	utf8::utf8to16(str.begin(), str.end(), std::back_inserter(dest));
+	std::wstring ws(dest.begin(), dest.end());
+	return ws;
+}
 
 void fatal(const char* fmt, ...)
 {
@@ -133,6 +147,7 @@ struct State
 	int yo = 0;
 	int spacesize = 0;
 	bool somepx = false;
+	std::string charset;
 	int cellWidth = -1, cellHeight = -1;
 	std::vector<InputRef> inputs;
 	std::vector<CharacterKernData> ckern;
@@ -214,7 +229,15 @@ struct Job
 
 		std::vector<SomepxGlyphScan> scans;
 
-		const wchar_t* charMap = LR"(ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,;:?!"'+-=*%_()[]{}~#&@©®™°^`|/\<>…€$£¢¿¡“”‘’«»‹›„‚·•ÀÁÂÄÃÅĄÆÇĆÐÈÉÊËĘĞÌÍÎÏİŁÑŃÒÓÔÖÕŐØŒŚŞẞÞÙÚÛÜŰÝŸŹŻàáâäãåąæçćðèéêëęğìíîïıłñńòóôöõőøœśşßþùúûüűýÿźżАБВГҐДЕЁЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгґдеёєжзиіїйклмнопрстуфхцчшщъыьэюяČĎĚŇŘŠŤŮŽčďěňřšťůž)";
+		std::wstring charmapWTmp;
+		const wchar_t* charMap = LR"()";
+
+		if(!state.charset.empty())
+		{
+			charmapWTmp = utf8toW(state.charset);
+			charMap = charmapWTmp.c_str();
+		}
+
 		const wchar_t* cp = charMap;
 		int xslot = 0, yslot = 0;
 		while(*cp)
@@ -740,6 +763,10 @@ int main(int argc, char* argv[])
 		{
 			//reset all state
 			new(&state) State();
+		}
+		else if(cmd == "charset")
+		{
+			state.charset = trim(line.substr(7));
 		}
 		else if(cmd == "format")
 		{

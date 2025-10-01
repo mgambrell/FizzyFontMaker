@@ -55,11 +55,11 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <LinkIncremental>true</LinkIncremental>
-    <OutDir>C:\rg\jimmyfinishitnow\Fonts\</OutDir>
+    <OutDir>C:\rg\jimmyfontdevbuild\Fonts</OutDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <LinkIncremental>false</LinkIncremental>
-    <OutDir>C:\rg\jimmyfinishitnow\Fonts\</OutDir>
+    <OutDir>C:\rg\jimmyfontdevbuild\Fonts</OutDir>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
