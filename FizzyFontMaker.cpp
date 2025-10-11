@@ -89,6 +89,7 @@ public:
 		ret->c = this->c;
 		ret->xo = this->xo - offset_x;
 		ret->yo = this->yo - offset_y;
+		ret->yo += this->yo;
 
 		//if needed to clone it
 		#if 0
@@ -132,6 +133,7 @@ struct InputRef
 	int startCode;
 	std::string charset;
 	int usenchars = -1;
+	int yo = 0;
 };
 
 struct CharacterKernData
@@ -288,6 +290,7 @@ struct Job
 			int glyphH = s.lastPyo - minFirstPyo + 1;
 			Glyph* g = new Glyph(glyphW, glyphH);
 			g->c = s.c;
+			g->yo = input.yo;
 			glyphs.push_back(g);
 
 			for(int gy = 0; gy < glyphH; gy++)
@@ -718,7 +721,7 @@ struct Job
 		outputInfo.json["keyStr"] = keystr;
 		outputInfo.json["metaAtY"] = atlas.metaAtY;
 		outputInfo.json["xo"] = state.xo;
-		outputInfo.json["yo"] = state.yo;
+		outputInfo.json["yo"] = 0; //now stored in per-glyph info
 		outputInfo.json["kern"] = state.kern;
 	}
 };
@@ -788,6 +791,7 @@ int main(int argc, char* argv[])
 				InputRef IR;
 				IR.filename = parts[1];
 				IR.charset = state.charset;
+				IR.yo = state.yo;
 				state.inputs.push_back(IR);
 			}
 			else
