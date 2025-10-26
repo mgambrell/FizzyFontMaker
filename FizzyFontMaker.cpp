@@ -35,14 +35,14 @@ std::wstring utf8toW(const std::string& str)
 
 void fatal(const char* fmt, ...)
 {
-	printf("FATAL ERROR");
+	printf("FATAL ERROR\n");
 	
 	va_list args;
 	va_start(args, fmt);
 	vprintf(fmt, args);
 	va_end(args);
 
-	abort();
+	exit(1);
 }
 
 //Wrapper for cute_png image
@@ -245,6 +245,10 @@ struct Job
 		int xslot = 0, yslot = 0;
 		while(*cp)
 		{
+			if(*cp > 0x200)
+			{
+				int zzz=9;
+			}
 			int catx = cellWidth * xslot;
 			int caty = cellHeight * yslot;
 			SomepxGlyphScan g;
@@ -704,6 +708,15 @@ struct Job
 		nlohmann::json::array_t jCkerns;
 		for(auto rec : this->state.ckern)
 		{
+			//if it references a record that doesn't exist, throw an error
+			auto b = std::find_if(glyphs.begin(), glyphs.end(), [&](const Glyph* g) { return g->c == rec.before; });
+			auto a = std::find_if(glyphs.begin(), glyphs.end(), [&](const Glyph* g) { return g->c == rec.after; });
+			
+			if(rec.before != -1 && b == glyphs.end())
+ 				fatal("ckern before on nonexisting glyph %x", rec.before);
+			if(rec.after != -1 && a == glyphs.end())
+				fatal("ckern after on nonexisting glyph %x", rec.after);
+
 			jCkerns.push_back(
 				{
 					//int before, after, amount;
