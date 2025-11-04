@@ -76,6 +76,7 @@ class Glyph : public CPImage
 public:
 	int c;
 	int xo = 0, yo = 0;
+	bool empty = false;
 	int atlas_x, atlas_y;
 
 	Glyph(int width, int height)
@@ -127,12 +128,18 @@ private:
 	}
 };
 
+struct SpaceSize
+{
+	int ch, size;
+};
+
 struct InputRef
 {
 	std::string filename;
 	int startCode;
 	std::string charset;
 	int usenchars = -1;
+	std::vector<SpaceSize> spaceSizes;
 	int yo = 0;
 };
 
@@ -154,6 +161,7 @@ struct State
 	std::string charset;
 	std::vector<InputRef> inputs;
 	std::vector<CharacterKernData> ckern;
+	std::vector<SpaceSize> spaceSizes;
 };
 
 class ImageServer
@@ -396,6 +404,16 @@ struct Job
 				ReadSomepx(state.cellWidth, state.cellHeight, input);
 			else
 				ReadFizzFont(input);
+
+			//add space sizes
+			//(height of glyph is 1, to keep things sane: width is what's requested)
+			for(auto ent : input.spaceSizes)
+			{
+				Glyph *G = new Glyph(ent.size,1);
+				G->empty = true;
+				G->c = ent.ch;
+				glyphs.push_back(G);
+			}
 		
 		} //END INPUT LOOP
 
@@ -528,11 +546,18 @@ struct Job
 				}
 
 				//(actually transfer glyphs)
+				int myw = lr->w;
+				if(myw == 0)
+					myw = 1;
 				for(int gy=0;gy<lr->h;gy++)
 				{
-					for(int gx=0;gx<lr->w;gx++)
+					for(int gx=0;gx<myw;gx++)
 					{
-						atlasPixels->at(atx+gx,aty+gy) = lr->at(gx, gy);
+						if(lr->empty)
+							//atlasPixels->at(atx + gx, aty + gy) = {0xFF,0xFF,0xFF,0xFF}; //TEST - should be empty
+							atlasPixels->at(atx + gx, aty + gy) = {0};
+						else
+							atlasPixels->at(atx+gx,aty+gy) = lr->at(gx, gy);
 					}
 				}
 
@@ -785,6 +810,13 @@ int main(int argc, char* argv[])
 		{
 			state.charset = trim(line.substr(7));
 		}
+		else if(cmd == "synthspace")
+		{
+			SpaceSize ss = {0};
+			ss.ch = atoi(parts[1].c_str());
+			ss.size= atoi(parts[2].c_str());
+			state.spaceSizes.push_back(ss);
+		}
 		else if(cmd == "format")
 		{
 			if(parts[1] == "somepx")
@@ -804,6 +836,7 @@ int main(int argc, char* argv[])
 				InputRef IR;
 				IR.filename = parts[1];
 				IR.charset = state.charset;
+				IR.spaceSizes = state.spaceSizes;
 				IR.yo = state.yo;
 				state.inputs.push_back(IR);
 			}
