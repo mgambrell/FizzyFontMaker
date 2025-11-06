@@ -512,9 +512,10 @@ struct Job
 					}
 
 					//clamp the accumulated value and write it directly to the output glyph
+					//RGB is 0xFF for convenience tinting later
 					auto& px = og->at(x, y);
 					px.a = std::min(255, static_cast<int>(accumAlpha));
-					px.r = px.g = px.b = 0; //13; //experiment with gray dropshadow
+					px.r = px.g = px.b = 255;
 				}
 			}
 		}
